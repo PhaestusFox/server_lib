@@ -5,19 +5,22 @@ use uuid::Uuid;
 pub use prelude::*;
 mod prelude {
     pub use crate::date::Date;
-    pub use crate::events::ItemData;
-    pub use crate::events::EventData;
-    pub use crate::events::EventKey;
-    pub use crate::events::ItemId;
-    pub use crate::events::Item;
+    pub use crate::items::ItemData;
+    pub use crate::items::EventData;
+    pub use crate::items::EventId;
+    pub use crate::items::ItemId;
+    pub use crate::items::Item;
     #[cfg(feature = "yew")]
-    pub use crate::events::{YewObj, ObjList, yew_impl::ObjMsg, yew_impl::LoadedItems3};
+    pub use crate::items::{YewObj, ObjList, yew_impl::ObjMsg, yew_impl::LoadedItems, ObjView};
     //#[cfg(feature = "yew")]
     //pub use crate::events:;
 }
-pub mod events;
+pub mod items;
 pub mod date;
 pub mod worms;
+pub mod plants;
+#[cfg(feature = "yew")]
+pub mod components;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Note {
@@ -39,9 +42,9 @@ pub struct Database {
 }
 
 impl Database {
-    fn get_next_key(&self, date: Date) -> Result<EventKey, DbError> {
+    fn get_next_key(&self, date: Date) -> Result<EventId, DbError> {
         use bincode::Options;
-        let key = EventKey::date_key(date);
+        let key = EventId::date_key(date);
         let options = bincode::options().with_big_endian();
         let next = self.db.update_and_fetch(key, |v| {
             let mut next = match v {
@@ -57,13 +60,13 @@ impl Database {
         Ok(key.with_id(id))
     }
     #[inline(always)]
-    pub fn add_event(&self, event: &EventData) -> Result<EventKey, DbError> {
+    pub fn add_event(&self, event: &EventData) -> Result<EventId, DbError> {
         let key = self.get_next_key(event.date)?;
         self.type_tree.insert(key, event.type_name.as_str())?;
         self.events.insert(key, event.data.as_str())?;
         Ok(key)
     }
-    pub fn get_event_obj(&self, key: EventKey) -> anyhow::Result<Box<dyn Reflect>> {
+    pub fn get_event_obj(&self, key: EventId) -> anyhow::Result<Box<dyn Reflect>> {
         let type_name = if let Some(name) = self.type_tree.get(key)? {
             String::from_utf8(name.to_vec())?
         } else {
@@ -87,7 +90,7 @@ impl Database {
         //let mut de = bincode::Deserializer::from_slice(&data, bincode::options());
         Ok(ser.deserialize(&mut de)?)
     }
-    pub fn add_event_obj(&self, event: &dyn Reflect, date: Date) -> anyhow::Result<EventKey> {
+    pub fn add_event_obj(&self, event: &dyn Reflect, date: Date) -> anyhow::Result<EventId> {
         let key = self.get_next_key(date)?;
         let registration = match self.type_registry.get(event.type_id()) {
             Some(r) => r,
@@ -162,7 +165,7 @@ impl Database {
         } else {return Err(DbError::NoData);};
         Ok(ItemData { type_name: name, data })
     }
-    pub fn get_event(&self, key: EventKey) -> Result<EventData, DbError> {
+    pub fn get_event(&self, key: EventId) -> Result<EventData, DbError> {
         let name = if let Some(v) = self.type_tree.get(key)? {
             String::from_utf8(v.to_vec())?
         } else {return Err(DbError::NoTypeName);};
@@ -175,7 +178,17 @@ impl Database {
             date: key.date_from_key(),
         })
     }
-
+    pub fn add_item(&self, item: &ItemData) -> Result<ItemId, DbError> {
+        let uuid = Uuid::new_v4();
+        self.type_tree.insert(uuid, item.type_name.as_str())?;
+        self.db.insert(uuid, item.data.as_str())?;
+        Ok(ItemId(uuid))
+    }
+    pub fn insert_item(&self,id: ItemId, item: &ItemData) -> Result<(), DbError> {
+        self.type_tree.insert(id, item.type_name.as_str())?;
+        self.db.insert(id, item.data.as_str())?;
+        Ok(())
+    }
     pub fn new<P: AsRef<std::path::Path>>(path: P) -> Result<Database, DbError> {
         let db = sled::open(path)?;
         Ok(Database {
@@ -189,14 +202,14 @@ impl Database {
 
 fn type_registry() -> bevy_reflect::TypeRegistry {
     let mut type_reg = bevy_reflect::TypeRegistry::new();
-    type_reg.register::<events::Plant>();
-    type_reg.register::<events::silkworms::SilkWormEvents>();
+    type_reg.register::<ItemId>();
+    worms::register_types(&mut type_reg);
     type_reg
 }
 
 #[cfg(test)]
 mod test {
-    use crate::{EventKey, Database, events::{Plant, PlantTypes, silkworms::SilkWormEvents}};
+    use crate::{EventId, Database, plants::{Plant, PlantTypes}};
     use super::Date;
     fn test_db() -> Database {
         let db_options = sled::Config::new().temporary(true);
@@ -215,7 +228,7 @@ mod test {
     #[test]
     fn date_key() {
         let date = Date::new_ymd(2030, 12, 11);
-        let key = EventKey::date_key(date);
+        let key = EventId::date_key(date);
         assert!(key.is_date_key());
         assert_eq!(date, key.date_from_key());
     }
@@ -226,13 +239,13 @@ mod test {
         let date = Date::new_ymd(2022, 09, 30);
         let next = date.next();
         let key1 = db.get_next_key(date).unwrap();
-        assert_eq!(key1, EventKey::date_key(date).with_id(1));
+        assert_eq!(key1, EventId::date_key(date).with_id(1));
         let key2 = db.get_next_key(date).unwrap();
-        assert_eq!(key2, EventKey::date_key(date).with_id(2));
+        assert_eq!(key2, EventId::date_key(date).with_id(2));
         let next1 = db.get_next_key(next).unwrap();
-        assert_eq!(next1, EventKey::date_key(next).with_id(1));
+        assert_eq!(next1, EventId::date_key(next).with_id(1));
         let next2 = db.get_next_key(next).unwrap();
-        assert_eq!(next2, EventKey::date_key(next).with_id(2));
+        assert_eq!(next2, EventId::date_key(next).with_id(2));
     }
 
     #[test]
@@ -241,32 +254,21 @@ mod test {
         let mut db = test_db();
         db.type_registry.register::<Plant>();
         db.type_registry.register::<PlantTypes>();
-        db.type_registry.register::<SilkWormEvents>();
         let date = test_date();
         let event0 = Plant::test(0);
         let event1 = Plant::test(1);
-        let event2 = SilkWormEvents::Hatched(date);
         let event0_key = db.add_event_obj(event0.as_reflect(), date).unwrap();
         let event1_key = db.add_event_obj(event1.as_reflect(), date).unwrap();
-        let event2_key = db.add_event_obj(event2.as_reflect(), date).unwrap();
-        assert!(event0_key == EventKey::date_key(date).with_id(1));
-        assert!(event1_key == EventKey::date_key(date).with_id(2));
-        assert!(event2_key == EventKey::date_key(date).with_id(3));
-        let event0_ref = match db.get_event_obj(event0_key) {
-            Ok(v) => v,
-            Err(e) => {println!("{:?}", e); panic!()},
-        };
+        assert!(event0_key == EventId::date_key(date).with_id(1));
+        assert!(event1_key == EventId::date_key(date).with_id(2));
+        let event0_ref = db.get_event_obj(event0_key).unwrap();
         let event1_ref = db.get_event_obj(event1_key).unwrap();
-        let event2_ref = db.get_event_obj(event2_key).unwrap();
         let event0 = Plant::test(0);
         let event1 = Plant::test(1);
-        let event2 = SilkWormEvents::Hatched(date);
         assert!(event0_ref.is::<Plant>());
         assert!(event1_ref.is::<Plant>());
-        assert!(event2_ref.is::<SilkWormEvents>());
         assert_eq!(event0, event0_ref.take::<Plant>().unwrap());
         assert_eq!(event1, event1_ref.take::<Plant>().unwrap());
-        assert_eq!(event2, event2_ref.take::<SilkWormEvents>().unwrap())
     }
 }
 

@@ -1,16 +1,22 @@
-use std::sync::Arc;
-
 use crate::*;
+use enum_utils::FromStr;
 use serde::{Deserialize, Serialize};
+use strum::{EnumIter, IntoStaticStr};
 
-#[derive(Debug, Deserialize, Serialize, Reflect, Clone, Copy)]
+pub fn register_types(reg: &mut bevy_reflect::TypeRegistry) {
+    reg.register::<Gender>();
+    reg.register::<WormType>();
+    reg.register::<Stage>();
+}
+
+#[derive(Debug, Deserialize, Serialize, Reflect, Clone, Copy, FromStr, EnumIter, IntoStaticStr)]
 #[reflect_value(Deserialize, Serialize)]
-enum Gender {
+pub enum Gender {
+    Unknown,
     Male,
     SuspectedMale,
     Female,
     SuspectedFemale,
-    UnSexed,
 }
 
 impl std::fmt::Display for Gender {
@@ -19,7 +25,7 @@ impl std::fmt::Display for Gender {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Reflect, Clone, Copy)]
+#[derive(Debug, Deserialize, Serialize, Reflect, Clone, Copy, FromStr, EnumIter, IntoStaticStr)]
 #[reflect_value(Deserialize, Serialize)]
 enum WormType {
     KingWorm,
@@ -43,13 +49,14 @@ enum Event {
     Added(ItemId, ItemId),
 }
 
-#[derive(Debug, Deserialize, Serialize, Reflect, Clone, Copy)]
+#[derive(Debug, Deserialize, Serialize, Reflect, Clone, Copy, FromStr, EnumIter, IntoStaticStr)]
 #[reflect_value(Deserialize, Serialize)]
 enum Stage {
-    Hatched,
+    Egg,
+    Larvae,
     Isolated,
-    Pupate,
-    Emerge,
+    Pupa,
+    Adult,
     Dead,
 }
 
@@ -60,11 +67,10 @@ impl std::fmt::Display for Stage {
 }
 
 #[derive(Debug, Deserialize, Serialize, Reflect, Clone)]
-#[reflect(Deserialize, Serialize)]
+#[reflect(Deserialize, Serialize, Default)]
 struct Individual {
-    id: ItemId,
     #[serde(skip)]
-    edit: bool,
+    id: ItemId,
     worm_type: WormType,
     stage: Stage,
     origin: ItemId,
@@ -72,9 +78,23 @@ struct Individual {
     location: ItemId,
 }
 
+impl Default for Individual {
+    fn default() -> Self {
+        Individual {
+            id: ItemId::default(),
+            worm_type: WormType::SilkWorm,
+            stage: Stage::Egg,
+            origin: ItemId::nil(),
+            gender: Gender::Unknown,
+            location: ItemId::nil()
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Reflect, Clone)]
 #[reflect(Deserialize, Serialize)]
 struct Brood {
+    #[serde(skip)]
     id: ItemId,
     parents: Vec<ItemId>,
     diet: ItemId,
@@ -83,6 +103,9 @@ struct Brood {
 impl Item for Brood {
     fn id(&self) -> ItemId {
         self.id
+    }
+    fn set_id(&mut self, id: ItemId) {
+        self.id = id;
     }
 }
 
@@ -93,6 +116,9 @@ impl Item for Individual {
     fn dependencies(&self) -> Option<Vec<ItemId>> {
         Some(vec![self.origin, self.location])
     }
+    fn set_id(&mut self, id: ItemId) {
+        self.id = id;
+    }
 }
 
 #[cfg(feature = "yew")]
@@ -100,8 +126,8 @@ pub mod yew {
     use std::rc::Rc;
     use yew::*;
 
-    use crate::events::Item;
-    use crate::events::YewObj;
+    use crate::items::Item;
+    use crate::items::YewObj;
     use crate::*;
 
     #[derive(Properties)]
@@ -121,7 +147,7 @@ pub mod yew {
     }
 
     impl YewObj for Test {
-        fn view(&self, _: &Context<crate::events::yew_impl::ObjList>) -> Html {
+        fn view(&self, _: &Context<crate::items::yew_impl::ObjView>) -> Html {
             html!{
                 <p>{"hi i am "}{&self.name}</p>
             }
@@ -129,8 +155,7 @@ pub mod yew {
     }
 
     impl Item for Test {
-        fn id(&self) -> ItemId {
-            todo!()
+        fn set_id(&mut self, _id: ItemId) {
         }
     }
 
@@ -138,15 +163,15 @@ pub mod yew {
     pub struct OtherTest(pub u8);
 
     impl Item for OtherTest {
-        fn id(&self) -> ItemId {
-            todo!()
+        fn set_id(&mut self, _id: ItemId) {
+            
         }
     }
 
     impl YewObj for OtherTest {
-        fn view(&self, ctx: &Context<crate::ObjList>) -> Html {
+        fn view(&self, ctx: &Context<crate::ObjView>) -> Html {
             html! {
-                if let Some(obj) = LoadedItems3::read().get(&ItemId::from_u128(0)) {
+                if let Some(obj) = LoadedItems::read().get(&ItemId::from_u128(0)) {
                     <div>
                     {obj.yew_obj().unwrap().view(ctx)}<br/>
                     <button onclick={
@@ -165,15 +190,19 @@ pub mod yew {
     #[derive(Reflect)]
     pub struct LoadTest;
     impl Item for LoadTest {
-        fn id(&self) -> ItemId {
-        todo!()
-    }
+        fn set_id(&mut self, _id: ItemId) {
+            
+        }
     }
 
     impl YewObj for LoadTest {
-        fn view(&self, ctx: &Context<crate::ObjList>) -> Html {
+        fn view(&self, ctx: &Context<crate::ObjView>) -> Html {
             html! {
-                if let Some(data) = LoadedItems3::read().get(&ItemId::from_u128(1)) {
+                <>
+                if let Some((_, _)) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()) {
+                    <h1>{"IT WORKED"}</h1>
+                }
+                if let Some(data) = LoadedItems::read().get(&ItemId::from_u128(1)) {
                     if let Some(obj) = data.yew_obj() {
                         {obj.view(ctx)}<br/>
                     } else {
@@ -182,38 +211,57 @@ pub mod yew {
                 } else {
                     {"loading..."}<br/>
                 }
+                </>
             }
         }
     }
 
     impl YewObj for super::Individual {
-        fn view(&self, ctx: &Context<crate::events::ObjList>) -> Html {
-            /*
-                id: ItemId,
-                worm_type: WormType,
-                stage: Stage,
-                orgin: ItemId,
-                gender: Gender,
-                location: ItemId,
-            */
-            let objs = LoadedItems3::read();
+        fn view(&self, ctx: &Context<crate::ObjView>) -> Html {
+            let objs = LoadedItems::read();
+            let id = self.id();
             html!{
-                <div>
-                <h1>{self.worm_type}</h1><br/>
+                <div id={id.to_string()}>
+                <div class="tooltip"><strong>{self.worm_type}</strong>
+                <span class="tooltiptext">{self.id.to_string()}</span>
+                </div><br/>
                 <strong class="stage">{"stage: "}{self.stage}</strong><br/>
+                <strong class="gender">{"Gender: "}{self.gender}</strong><br/>
                 <strong class="origin">{"from: "} if let Some(origin) = objs.get(&self.origin) {
                     {origin.yew_view(ctx)}
                 } else {
                     {{ctx.link().send_message(ObjMsg::Get(self.origin)); "Origin not loaded"}}
                 }</strong><br/>
-                <strong class="gender">{"Gender: "}{self.gender}</strong><br/>
                 <strong class="location">{"at: "} if let Some(location) = objs.get(&self.location) {
                     {location.yew_view(ctx)}
                 } else {
                     {{ctx.link().send_message(ObjMsg::Get(self.location)); "Location not loaded"}}
-                }</strong>
+                }</strong><br/>
                 </div>
             }
+        }
+        fn edit(&self, ctx: &Context<ObjView>) -> Html {
+            let id = ctx.props().id;
+            html! {
+                <div id={id.to_string()}>
+                    {"Type: "    } <crate::components::EnumSelect<super::WormType> target={id} field="worm_type"/><br/>
+                    {"Gender: "  } <crate::components::EnumSelect<super::Gender> target={id} field="gender"/><br/>
+                    {"Stage: "   } <crate::components::EnumSelect<super::Stage> target={id} field="stage"/><br/>
+                    {"Origin: "  } <crate::components::ItemIdInput target={id} field="origin"/><br/>
+                    {"Location: "} <crate::components::ItemIdInput target={id} field="location"/><br/>
+                </div>
+            }
+        }
+        fn simple(&self, ctx: &Context<ObjView>) -> Option<Html> {
+            let id = ctx.props().id;
+            Some(html!{
+                <div id={id.to_string()}>
+                    <h5 class="tooltip">{self.worm_type}</h5>
+                    <span class="tooltiptext">{self.id.to_string()}</span><br/>
+                    <h6>{self.gender}</h6><br/>
+                    <h6>{self.stage}</h6><br/>
+                </div>
+            })
         }
     }
 
@@ -225,8 +273,8 @@ pub mod yew {
             diet: ItemId,
         }
         */
-        fn view(&self, ctx: &Context<ObjList>) -> Html {
-            let objs = LoadedItems3::read();
+        fn view(&self, ctx: &Context<ObjView>) -> Html {
+            let objs = LoadedItems::read();
             html! {
                 <div class="brood">
                 <strong>{"brood: "}{self.id.to_string()}</strong><br/>
@@ -245,25 +293,23 @@ pub mod yew {
 #[cfg(feature = "yew")]
 pub fn load_test_worm() -> Vec<ItemId> {
     use crate::*;
-    let individual0 = LoadedItems3::load(None, Box::new(Individual {
+    let individual0 = LoadedItems::load(Box::new(Individual {
         id: ItemId::from_u128(10),
-        edit: true,
         worm_type: WormType::KingWorm,
-        gender: Gender::Male,
-        stage: Stage::Hatched,
+        gender: Gender::SuspectedMale,
+        stage: Stage::Larvae,
         origin: ItemId::from_u128(11),
         location: ItemId::from_u128(12)
     }));
-    let individual1 = LoadedItems3::load(None, Box::new(Individual {
+    let individual1 = LoadedItems::load(Box::new(Individual {
         id: ItemId::from_u128(14),
-        edit: false,
-        worm_type: WormType::KingWorm,
+        worm_type: WormType::SilkWorm,
         gender: Gender::Female,
         stage: Stage::Isolated,
         origin: ItemId::from_u128(11),
         location: ItemId::from_u128(15)
     }));
-    LoadedItems3::load(None, Box::new(Brood {
+    LoadedItems::load(Box::new(Brood {
         id: ItemId::from_u128(11),
         parents: vec![ItemId::from_u128(1), ItemId::from_u128(2)],
         diet: ItemId::from_u128(13),

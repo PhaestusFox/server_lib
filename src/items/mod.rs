@@ -2,10 +2,8 @@ use bevy_reflect::{prelude::*, FromReflect};
 use serde::{Serialize,Deserialize};
 use crate::*;
 
-pub mod silkworms;
-
 #[cfg(feature="yew")]
-pub use self::yew_impl::{YewObj, ObjList};
+pub use self::yew_impl::{YewObj, ObjList, ObjView};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ItemData {
@@ -65,11 +63,11 @@ mod rocket {
         }
     }
 
-    impl<'a> rocket::request::FromParam<'a> for super::EventKey {
+    impl<'a> rocket::request::FromParam<'a> for super::EventId {
         type Error = <u64 as std::str::FromStr>::Err;
 
         fn from_param(param: &'a str) -> Result<Self, Self::Error> {
-            super::EventKey::from_str(param)
+            super::EventId::from_str(param)
         }
     }
 
@@ -82,25 +80,12 @@ mod rocket {
     }
 }
 
-#[derive(Debug, Reflect, Serialize, Deserialize, PartialEq)]
-#[reflect(Serialize, Deserialize)]
-pub struct Plant {
-    plant_type: PlantTypes,
-}
-
-#[derive(Debug, Reflect, Clone, Copy, Serialize, Deserialize, PartialEq)]
-#[reflect_value(Serialize, Deserialize)]
-pub enum PlantTypes {
-    Lettuce,
-    Tomato
-}
-
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct EventKey([u8; 8]);
-impl EventKey {
-    pub fn date_key(date: Date) -> EventKey {
+pub struct EventId([u8; 8]);
+impl EventId {
+    pub fn date_key(date: Date) -> EventId {
         let data: [u8; 8] = ((date.0 as u64) << 32).to_be_bytes();
-        EventKey(data)
+        EventId(data)
     }
     pub fn is_date_key(&self) -> bool {
         self.0[3] & 0x80 == self.0[3] && self.0[4..] == [0; 4]
@@ -123,28 +108,28 @@ impl EventKey {
         }
         self.0[3] = (date[3] & 0x80) | (self.0[3] & 0x7F);
     }
-    pub fn with_id(mut self, id: u64) -> EventKey {
+    pub fn with_id(mut self, id: u64) -> EventId {
         self.set_val(id);
         self
     }
 }
 
-impl AsRef<[u8]> for EventKey {
+impl AsRef<[u8]> for EventId {
     fn as_ref(&self) -> &[u8] {
         &self.0
     }
 }
 
-impl ToString for EventKey {
+impl ToString for EventId {
     fn to_string(&self) -> String {
         u64::from_be_bytes(self.0).to_string()
     }
 }
 
-impl std::str::FromStr for EventKey {
+impl std::str::FromStr for EventId {
     type Err = <u64 as std::str::FromStr>::Err;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(EventKey(u64::from_str(s)?.to_be_bytes()))
+        Ok(EventId(u64::from_str(s)?.to_be_bytes()))
     }
 }
 
@@ -155,6 +140,21 @@ pub struct ItemId(pub(crate) Uuid);
 impl ItemId {
     pub fn from_u128(id: u128) -> ItemId {
         ItemId(Uuid::from_u128(id))
+    }
+    pub fn nil() -> ItemId {
+        ItemId(Uuid::nil())
+    }
+    pub fn new() -> ItemId {
+        ItemId(Uuid::new_v4())
+    }
+    pub fn is_nil(&self) -> bool {
+        self.0.is_nil()
+    }
+}
+
+impl Default for ItemId {
+    fn default() -> Self {
+        ItemId(Uuid::nil())
     }
 }
 
@@ -178,12 +178,6 @@ impl<'de> Deserialize<'de> for ItemId {
         where
             D: serde::Deserializer<'de> {
         Ok(ItemId(Uuid::deserialize(deserializer)?))
-    }
-}
-
-impl ItemId {
-    pub fn new() -> ItemId {
-        ItemId(Uuid::new_v4())
     }
 }
 
@@ -216,7 +210,10 @@ pub trait Item: Reflect + Extend {
     fn dependencies(&self) -> Option<Vec<ItemId>> {
         None
     }
-    fn id(&self) -> ItemId;
+    fn id(&self) -> ItemId {
+        ItemId::nil()
+    }
+    fn set_id(&mut self, id: ItemId);
 }
 
 impl PartialEq for dyn Item {
@@ -226,10 +223,40 @@ impl PartialEq for dyn Item {
 }
 #[cfg(feature = "yew")]
 pub trait Extend: Reflect {
-    fn yew_obj(&self) -> Option<&dyn crate::events::yew_impl::YewObj> {
+    fn yew_obj(&self) -> Option<&dyn crate::items::yew_impl::YewObj> {
         None
     }
-    fn yew_view(&self, ctx: &yew::Context<crate::ObjList>) -> yew::Html {
+    fn yew_simple(&self, ctx: &yew::Context<crate::ObjView>) -> yew::Html {
+        if let Some(yew_obj) = self.yew_obj() {
+            if let Some(view) = yew_obj.simple(ctx) {view} else {
+                yew::html! {
+                    <div class="error">
+                    {self.type_name()}{" does not impl YewObj::simple"}
+                    </div>
+                }
+            }
+        } else {
+            yew::html!{
+                <div class="error">
+                {self.type_name()}{" does not impl YewObj"}
+                </div>
+            }
+        }
+    }
+
+    fn yew_edit(&self, ctx: &yew::Context<crate::ObjView>) -> yew::Html {
+        if let Some(yew_obj) = self.yew_obj() {
+            yew_obj.edit(ctx)
+        } else {
+            yew::html!{
+                <div class="error">
+                {self.type_name()}{" does not impl YewObj"}
+                </div>
+            }
+        }
+    }
+
+    fn yew_view(&self, ctx: &yew::Context<crate::ObjView>) -> yew::Html {
         if let Some(yew_obj) = self.yew_obj() {
             yew_obj.view(ctx)
         } else {
@@ -251,17 +278,30 @@ impl<T> Extend for T  { }
 pub mod yew_impl {
     use std::rc::Rc;
 
+    use bevy_reflect::ReflectMut;
     use yew::*;
     use crate::*;
 
-    impl<T: YewObj> super::Extend for T {
-        fn yew_obj(&self) -> Option<&dyn crate::events::yew_impl::YewObj> {
+    impl<T> super::Extend for T where T: YewObj {
+        fn yew_obj(&self) -> Option<&dyn crate::items::yew_impl::YewObj> {
             Some(self as &dyn YewObj)
         }
     }
 
-    pub trait YewObj: super::Item {
-        fn view(&self, ctx: &Context<ObjList>) -> Html;
+    pub trait YewObj: Reflect {
+        /// the default view for this item
+        fn view(&self, ctx: &Context<ObjView>) -> Html;
+        /// a simple view of the item for things like lists or thumbs
+        /// none if no simple specified
+        #[allow(unused_variables)]
+        fn simple(&self, ctx: &Context<ObjView>) -> Option<Html> {
+            None
+        }
+        /// a edit view of the object such as making enums <EnumSelect>
+        /// defaults to view
+        fn edit(&self, ctx: &Context<ObjView>) -> Html {
+            self.view(ctx)
+        }
     }
 
     impl PartialEq for dyn YewObj {
@@ -271,23 +311,47 @@ pub mod yew_impl {
     }
 
     #[derive(Debug, Clone)]
-    pub struct ObjList;
-    pub struct LoadedItems3(std::sync::RwLock<std::collections::HashMap<ItemId, Box<dyn Item>>>);
+    pub struct ObjList{
+        cb_id: Option<usize>,
+    }
+    pub struct LoadedItems(std::sync::RwLock<std::collections::HashMap<ItemId, Box<dyn Item>>>);
 
-    pub(crate) static LOADED_ITEMS: once_cell::sync::Lazy<LoadedItems3> = once_cell::sync::Lazy::new(||
-        LoadedItems3(std::sync::RwLock::new(std::collections::HashMap::default())));
+    pub(crate) static LOADED_ITEMS: once_cell::sync::Lazy<LoadedItems> = once_cell::sync::Lazy::new(||
+        LoadedItems(std::sync::RwLock::new(std::collections::HashMap::default())));
 
-    impl LoadedItems3 {
+    impl LoadedItems {
         pub fn read() -> std::sync::RwLockReadGuard<'static, std::collections::HashMap<ItemId, Box<dyn Item>>> {
             LOADED_ITEMS.0.read().unwrap()
         }
         pub fn write() -> std::sync::RwLockWriteGuard<'static, std::collections::HashMap<ItemId, Box<dyn Item>>>{
             LOADED_ITEMS.0.write().unwrap()
         }
-        pub fn load(id: Option<ItemId>, item: Box<dyn Item>) -> ItemId {
-            let id = if let Some(id) = id {id} else {item.id()};
-            LoadedItems3::write().insert(id, item);
+        pub fn load(mut item: Box<dyn Item>) -> ItemId {
+            let id = if item.id().is_nil() {
+                let id = ItemId::new();
+                item.set_id(id);
+                id
+            } else {
+                item.id()
+            };
+            LoadedItems::write().insert(id, item);
             id
+        }
+        pub fn get<T: Reflect + Clone>(item: ItemId, field: &'static str) -> Option<T> {
+            use bevy_reflect::ReflectRef;
+            match LoadedItems::read().get(&item)?.reflect_ref() {
+                ReflectRef::Struct(s) => {s.get_field::<T>(field).cloned()},
+                _ => unimplemented!()
+            }
+        }
+        pub fn set<T: Reflect>(item: ItemId, field: &'static str, new_val: T) -> anyhow::Result<()> {
+            match LoadedItems::write().get_mut(&item).ok_or(anyhow::anyhow!("failed to find item {:?}", item))?.reflect_mut() {
+                ReflectMut::Struct(s) => {if let Some(val) = s.get_field_mut::<T>(field) {
+                    *val = new_val;
+                }},
+                _ => unimplemented!()
+            }
+            Ok(())
         }
     }
 
@@ -295,14 +359,26 @@ pub mod yew_impl {
         type Message = ObjMsg;
         type Properties = Props;
 
-        fn create(_ctx: &Context<Self>) -> Self {
-            ObjList
+        fn create(ctx: &Context<Self>) -> Self {
+            web_sys::console::log_1(&"here".into());
+            if let Some((cb,_)) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()) {
+                let id = cb.reg_cb(ctx.link().callback(|_| ObjMsg::CallBack));
+                web_sys::console::log_1(&"here1".into());
+                ObjList {
+                    cb_id: Some(id),
+                }
+            } else {
+                web_sys::console::log_1(&"here2".into());
+                ObjList {
+                    cb_id: None,
+                }
+            }
         }
 
         fn view(&self, ctx: &Context<Self>) -> Html {
             html! {
                 <div>
-                {for ctx.props().display.iter().map(|item| LoadedItems3::read().get(item).map_or(html!{"loading..."}, |e| e.yew_view(ctx)))}
+                {for ctx.props().display.iter().map(|item| html!{<ObjView id={item.clone()} edit={false}/>})}
                 <button onclick={ctx.link().callback(|_| ObjMsg::Test(0))}>{"add 0"}</button>
                 <button onclick={ctx.link().callback(|_| ObjMsg::Test(1))}>{"add 1"}</button>
                 <button onclick={ctx.link().callback(|_| ObjMsg::Test(2))}>{"add 2"}</button>
@@ -313,7 +389,7 @@ pub mod yew_impl {
         fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
             match msg {
                 ObjMsg::Load(item) => {
-                    LoadedItems3::load(None, item);
+                    LoadedItems::load(item);
                     true
                 },
                 ObjMsg::Get(_) => {false},
@@ -329,39 +405,53 @@ pub mod yew_impl {
                     _ctx.link().send_message(ObjMsg::Load(Box::new(obj)));
                     false
                 },
+                ObjMsg::Apply(_) => {todo!()},
+                ObjMsg::SetEdit(_) => {todo!()},
+                ObjMsg::CallBack => {true}
+            }
+        }
+        fn destroy(&mut self, ctx: &Context<Self>) {
+            if let Some(id) = self.cb_id {
+                if let Some((cb,_)) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()) {
+                    cb.un_reg_cb(id)
+                }
             }
         }
     }
 
     #[derive(Properties, PartialEq)]
     pub struct ViewProps{
-        id: ItemId,
+        pub id: ItemId,
+        //#[properties_or(false)]
+        pub edit: bool,
     }
 
-    pub struct ItemView;
-    pub enum ViewMsg {
-        Apply(Box<dyn Reflect>),
+    pub struct ObjView {
+        cb_id: Option<usize>
     }
 
-    impl Component for ItemView {
-        type Message = ViewMsg;
+    impl Component for ObjView {
+        type Message = ObjMsg;
         type Properties = ViewProps;
-        fn create(_ctx: &Context<Self>) -> Self {
-            Self
+        fn create(ctx: &Context<Self>) -> Self {
+            if let Some((cb,_)) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()) {
+                let id = cb.reg_cb(ctx.link().callback(|_| ObjMsg::CallBack));
+                ObjView {
+                    cb_id: Some(id),
+                }
+            } else {
+                ObjView {
+                    cb_id: None,
+                }
+            }
         }
         fn view(&self, ctx: &Context<Self>) -> Html {
             let id = ctx.props().id;
-            if let Some(_) = LoadedItems3::read().get(&id) {
-                html! {
-                    <button onclick={ctx.link().callback(|_| {
-                        let val = Box::new(
-                            super::TestString {
-                                id: ItemId::from_u128(0),
-                                data: "Set 100%".to_string(),
-                            }
-                        );
-                        ViewMsg::Apply(val)
-                    })}>{"click to set 100%"}</button>
+            if let Some(data) = LoadedItems::read().get(&id) {
+                if ctx.props().edit {
+                    data.yew_edit(ctx)
+                } else {
+                    data.yew_view(ctx)
                 }
             } else {
                 html!{"loading..."}
@@ -369,24 +459,62 @@ pub mod yew_impl {
         }
         fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
             match msg {
-                ViewMsg::Apply(data) => {
-                    let mut lock = LoadedItems3::write();
+                ObjMsg::Apply(data) => {
+                    let mut lock = LoadedItems::write();
                     if let Some(obj) = lock.get_mut(&ctx.props().id) {
                         obj.apply(data.as_reflect());
+                        if let (bevy_reflect::ReflectRef::Struct(s), bevy_reflect::ReflectRef::Struct(d)) = (obj.reflect_ref(), data.reflect_ref()) {
+                            web_sys::console::log_1(&format!("{:?}:{:?}", s.get_field::<crate::worms::Gender>("gender"), d.field_len()).into());
+                        }
                         true
                     } else {
                         false
                     }
+                },
+                ObjMsg::Get(_) => {false},
+                ObjMsg::Load(item) => {
+                    LoadedItems::load(item);
+                    true
+                },
+                ObjMsg::Test(id) => {
+                    let obj = match id {
+                        0 => super::TestString {id: ItemId::from_u128(0), data: "Test 0".to_string()},
+                        1 => super::TestString {id: ItemId::from_u128(1), data: "Loaded".to_string()},
+                        2 => super::TestString {id: ItemId::from_u128(1), data: "Alt Loaded".to_string()},
+                        3 => super::TestString {id: ItemId::from_u128(0), data: "Alt 0".to_string()},
+                        4 => super::TestString {id: ItemId::from_u128(0), data: "Alt 1".to_string()},
+                        _ => {return false;}
+                    };
+                    ctx.link().send_message(ObjMsg::Load(Box::new(obj)));
+                    false
+                },
+                ObjMsg::SetEdit(to) => {
+                    if let Err(e) = LoadedItems::set(ctx.props().id, "edit", to) {
+                        web_sys::console::error_1(&e.to_string().into());
+                        false
+                    } else {
+                        true
+                    }
+                },
+                ObjMsg::CallBack => {true}
+            }
+        }
+        fn destroy(&mut self, ctx: &Context<Self>) {
+            if let Some(id) = self.cb_id {
+                if let Some((cb,_)) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()) {
+                    cb.un_reg_cb(id)
                 }
             }
         }
     }
 
-
     pub enum ObjMsg {
         Load(Box<dyn Item>),
         Get(ItemId),
         Test(u8),
+        Apply(Box<dyn Item>),
+        SetEdit(bool),
+        CallBack,
     }
 
     #[derive(Properties, PartialEq)]
@@ -395,9 +523,34 @@ pub mod yew_impl {
     }
 
     impl YewObj for super::TestString {
-        fn view(&self, _ctx: &yew::Context<ObjList>) -> yew::Html {
+        fn view(&self, _ctx: &yew::Context<ObjView>) -> yew::Html {
             yew::html!{
                 {&self.data}
+            }
+        }
+    }
+
+    impl Item for bevy_reflect::DynamicStruct {
+        fn id(&self) -> ItemId {
+            if let Some(v) = self.get_field("id") {
+                *v
+            } else {
+                ItemId(Uuid::nil())
+            }
+        }
+        fn set_id(&mut self, id: ItemId) {
+            if let Some(f) = self.get_field_mut::<ItemId>("id") {
+                *f = id;
+            } else {
+                self.insert("id", id);
+            }
+        }
+    }
+
+    impl YewObj for bevy_reflect::DynamicStruct {
+        fn view(&self, _ctx: &Context<ObjView>) -> Html {
+            html! {
+                {format!("{:?}", self)}
             }
         }
     }
@@ -405,32 +558,14 @@ pub mod yew_impl {
 
 #[cfg(test)]
 mod test {
-    impl super::Plant {
-        pub fn test(id: u8) -> super::Plant {
-            match id {
-                0 => super::Plant {
-                    plant_type: super::PlantTypes::Lettuce,
-                },
-                _ => super::Plant {
-                    plant_type: super::PlantTypes::Tomato,
-                },
-            }
-            
-        }
-    }
     #[test]
     fn reflect() {
         use crate::*;
-        use crate::events::*;
-        use crate::events::silkworms::SilkWormEvents;
-        let plant = Plant {
-            plant_type: PlantTypes::Tomato,
-        };
-        let silkworm = SilkWormEvents::Hatched(Date::new_ymd(2022, 10, 01));
+        use crate::plants::*;
+        let plant = Plant::test(1);
         let mut type_regisury = bevy_reflect::TypeRegistry::new();
         type_regisury.register::<Plant>();
         type_regisury.register::<PlantTypes>();
-        type_regisury.register::<SilkWormEvents>();
         
         fn to_data(to_ser: &dyn Reflect, type_regisury: &bevy_reflect::TypeRegistry) -> (&'static str, String) {
             let info = type_regisury.get(to_ser.type_id()).unwrap();
@@ -448,13 +583,9 @@ mod test {
             ser.deserialize(&mut de).unwrap()
         }
     let data0 = to_data(plant.as_reflect(), &type_regisury);
-    let data1 = to_data(silkworm.as_reflect(), &type_regisury);
-    let data = [data0, data1];
-    println!("{:?}", data);
+    let data = [data0];
     let obj0 = from_data(&data[0], &type_regisury);
-    let obj1 = from_data(&data[1], &type_regisury);
     assert!(obj0.is::<Plant>());
-    assert!(obj1.is::<SilkWormEvents>());
 }
 
 }
@@ -468,5 +599,7 @@ impl Item for TestString {
     fn id(&self) -> ItemId {
         self.id
     }
+    fn set_id(&mut self, id: ItemId) {
+        self.id = id;
+    }
 }
-

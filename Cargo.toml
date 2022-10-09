@@ -14,9 +14,16 @@ sled = "0.34.7"
 bevy_reflect = "0.8.1"
 ron = "*"
 bincode = "*"
-yew = {version = "0.19", optional = true}
-rocket = {version = "0.5.0-rc.2", optional = true}
+yew = {version ="0.19", optional = true}
+rocket = {version ="0.5.0-rc.2", optional = true}
+web-sys = {version ="0.3.60", optional = true, features=["HtmlCollection"]}
+js-sys = {version ="0.3.60", optional = true}
+wasm-bindgen = {version ="0.2.83", optional = true}
 once_cell = "1.15.0"
+enum-utils = {version = "0.1.2"}
+strum = {version = "0.24.1", features=["derive"]}
+derive_more = {version="0.99.17"}
 
 [features]
 default = ["yew", "rocket"]
+yew = ["web-sys", "dep:yew", "js-sys", "wasm-bindgen"]
