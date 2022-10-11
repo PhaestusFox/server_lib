@@ -68,7 +68,7 @@ impl std::fmt::Display for Stage {
 
 #[derive(Debug, Deserialize, Serialize, Reflect, Clone)]
 #[reflect(Deserialize, Serialize, Default)]
-struct Individual {
+struct Worm {
     #[serde(skip)]
     id: ItemId,
     worm_type: WormType,
@@ -78,9 +78,9 @@ struct Individual {
     location: ItemId,
 }
 
-impl Default for Individual {
+impl Default for Worm {
     fn default() -> Self {
-        Individual {
+        Worm {
             id: ItemId::default(),
             worm_type: WormType::SilkWorm,
             stage: Stage::Egg,
@@ -109,7 +109,7 @@ impl Item for Brood {
     }
 }
 
-impl Item for Individual {
+impl Item for Worm {
     fn id(&self) -> ItemId {
         self.id
     }
@@ -170,8 +170,10 @@ pub mod yew {
 
     impl YewObj for OtherTest {
         fn view(&self, ctx: &Context<crate::ObjView>) -> Html {
+            let (cbr, _) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()).unwrap();
+            let objs = cbr.read_items();
             html! {
-                if let Some(obj) = LoadedItems::read().get(&ItemId::from_u128(0)) {
+                if let Some(obj) = objs.get(&ItemId::from_u128(0)) {
                     <div>
                     {obj.yew_obj().unwrap().view(ctx)}<br/>
                     <button onclick={
@@ -197,12 +199,11 @@ pub mod yew {
 
     impl YewObj for LoadTest {
         fn view(&self, ctx: &Context<crate::ObjView>) -> Html {
+            let (cbr, _) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()).unwrap();
+            let objs = cbr.read_items();
             html! {
                 <>
-                if let Some((_, _)) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()) {
-                    <h1>{"IT WORKED"}</h1>
-                }
-                if let Some(data) = LoadedItems::read().get(&ItemId::from_u128(1)) {
+                if let Some(data) = objs.get(&ItemId::from_u128(1)) {
                     if let Some(obj) = data.yew_obj() {
                         {obj.view(ctx)}<br/>
                     } else {
@@ -216,9 +217,10 @@ pub mod yew {
         }
     }
 
-    impl YewObj for super::Individual {
+    impl YewObj for super::Worm {
         fn view(&self, ctx: &Context<crate::ObjView>) -> Html {
-            let objs = LoadedItems::read();
+            let (cbr, _) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()).unwrap();
+            let objs = cbr.read_items();
             let id = self.id();
             html!{
                 <div id={id.to_string()}>
@@ -274,7 +276,8 @@ pub mod yew {
         }
         */
         fn view(&self, ctx: &Context<ObjView>) -> Html {
-            let objs = LoadedItems::read();
+            let (cbr, _) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()).unwrap();
+            let objs = cbr.read_items();
             html! {
                 <div class="brood">
                 <strong>{"brood: "}{self.id.to_string()}</strong><br/>
@@ -291,9 +294,9 @@ pub mod yew {
 }
 
 #[cfg(feature = "yew")]
-pub fn load_test_worm() -> Vec<ItemId> {
+pub fn load_test_worm(cbr: &crate::components::CallbackReg) -> Vec<ItemId> {
     use crate::*;
-    let individual0 = LoadedItems::load(Box::new(Individual {
+    let individual0 = cbr.load(Box::new(Worm {
         id: ItemId::from_u128(10),
         worm_type: WormType::KingWorm,
         gender: Gender::SuspectedMale,
@@ -301,7 +304,7 @@ pub fn load_test_worm() -> Vec<ItemId> {
         origin: ItemId::from_u128(11),
         location: ItemId::from_u128(12)
     }));
-    let individual1 = LoadedItems::load(Box::new(Individual {
+    let individual1 = cbr.load(Box::new(Worm {
         id: ItemId::from_u128(14),
         worm_type: WormType::SilkWorm,
         gender: Gender::Female,
@@ -309,7 +312,7 @@ pub fn load_test_worm() -> Vec<ItemId> {
         origin: ItemId::from_u128(11),
         location: ItemId::from_u128(15)
     }));
-    LoadedItems::load(Box::new(Brood {
+    cbr.load(Box::new(Brood {
         id: ItemId::from_u128(11),
         parents: vec![ItemId::from_u128(1), ItemId::from_u128(2)],
         diet: ItemId::from_u128(13),

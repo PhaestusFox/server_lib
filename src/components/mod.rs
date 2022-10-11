@@ -24,7 +24,8 @@ impl<T: Reflect + Clone + FromStr + IntoEnumIterator + std::fmt::Display + Into<
         let props = ctx.props();
         let target = props.target;
         let field = props.field;
-        let current = LoadedItems::get::<T>(target, field).unwrap_or(T::iter().next().expect("Enum Needs atleast one Vairent"));
+        let (cbr, _) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()).unwrap();
+        let current = cbr.get::<T>(target, field).unwrap_or(T::iter().next().expect("Enum Needs atleast one Vairent"));
         let current: &'static str = current.into();
         web_sys::console::log_1(&current.into());
         let node = self.node.clone();
@@ -32,7 +33,7 @@ impl<T: Reflect + Clone + FromStr + IntoEnumIterator + std::fmt::Display + Into<
             <select ref={self.node.clone()} onchange={move |_| {
                 let val = node.cast::<web_sys::HtmlTextAreaElement>().unwrap().value();
                 match T::from_str(&val) {
-                    Ok(v) => if let Err(e) = LoadedItems::set::<T>(target, field, v) {web_sys::console::error_1(&e.to_string().into())},
+                    Ok(v) => if let Err(e) = cbr.set::<T>(target, field, v) {web_sys::console::error_1(&e.to_string().into())},
                     Err(_) => {web_sys::console::error_1(&format!{"Failed to parse '{}' to {}", val, std::any::type_name::<T>()}.into());}
                 };
             }}>
@@ -94,13 +95,15 @@ impl Component for ItemIdInput {
             Err(e) => {web_sys::console::error_1(&e.to_string().into()); return false;}
         };
         let props = ctx.props();
-        if let Err(e) = LoadedItems::set(props.target, props.field, ItemId(uuid)) {web_sys::console::error_1(&e.to_string().into()); return false;};
+        let (cbr, _) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()).unwrap();
+        if let Err(e) = cbr.set(props.target, props.field, ItemId(uuid)) {web_sys::console::error_1(&e.to_string().into()); return false;};
         true
     }
     fn rendered(&mut self, ctx: &Context<Self>, first_render: bool) {
         if first_render {
             let node = self.node.cast::<HtmlInputElement>().expect("ItemIdInput Component is Input node");
-            if let Some(val) = LoadedItems::get::<ItemId>(ctx.props().target, ctx.props().field) {
+            let (cbr, _) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()).unwrap();
+            if let Some(val) = cbr.get::<ItemId>(ctx.props().target, ctx.props().field) {
                 node.set_value(&val.to_string())
             } else {
                 node.set_value("00000000-0000-0000-0000-000000000000")
@@ -146,9 +149,13 @@ impl CallbackReg {
     }
 
     pub fn read_items(&self) -> std::sync::RwLockReadGuard<std::collections::HashMap<ItemId, Box<dyn Item>>> {
-        self.loaded_items.read().unwrap()
+        match self.loaded_items.read() {
+            Ok(v) => v,
+            Err(e) => {panic!("{}",e)}
+        }
     }
-    pub fn write_items(&self) -> std::sync::RwLockWriteGuard<std::collections::HashMap<ItemId, Box<dyn Item>>>{
+
+    fn write_items(&self) -> std::sync::RwLockWriteGuard<std::collections::HashMap<ItemId, Box<dyn Item>>>{
         self.loaded_items.write().unwrap()
     }
     pub fn load(&self, mut item: Box<dyn Item>) -> ItemId {
@@ -160,13 +167,19 @@ impl CallbackReg {
             item.id()
         };
         self.write_items().insert(id, item);
+        self.emit();
         id
     }
     pub fn get<T: Reflect + Clone>(&self, item: ItemId, field: &'static str) -> Option<T> {
         use bevy_reflect::ReflectRef;
         match self.read_items().get(&item)?.reflect_ref() {
             ReflectRef::Struct(s) => {s.get_field::<T>(field).cloned()},
-            _ => unimplemented!()
+            ReflectRef::TupleStruct(_) => todo!(),
+            ReflectRef::Tuple(_) => todo!(),
+            ReflectRef::List(_) => todo!(),
+            ReflectRef::Array(_) => todo!(),
+            ReflectRef::Map(_) => todo!(),
+            ReflectRef::Value(s) => todo!("{:?}", s),
         }
     }
     pub fn set<T: Reflect>(&self, item: ItemId, field: &'static str, new_val: T) -> anyhow::Result<()> {
@@ -174,9 +187,29 @@ impl CallbackReg {
         match self.write_items().get_mut(&item).ok_or(anyhow::anyhow!("failed to find item {:?}", item))?.reflect_mut() {
             ReflectMut::Struct(s) => {if let Some(val) = s.get_field_mut::<T>(field) {
                 *val = new_val;
+                self.emit();
             }},
             _ => unimplemented!()
         }
         Ok(())
+    }
+
+    pub fn apply(&self, item: &dyn Item) -> bool {
+        if let Some(obj) = self.write_items().get_mut(&item.id()) {
+            obj.apply(item.as_reflect());
+            if let (bevy_reflect::ReflectRef::Struct(s), bevy_reflect::ReflectRef::Struct(d)) = (obj.reflect_ref(), item.reflect_ref()) {
+                web_sys::console::log_1(&format!("{:?}:{:?}", s.get_field::<crate::worms::Gender>("gender"), d.field_len()).into());
+            }
+            self.emit();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn emit(&self) {
+        for cb in self.reg.read().unwrap().values() {
+            cb.emit(());
+        }
     }
 }

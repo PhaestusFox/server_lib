@@ -11,7 +11,7 @@ mod prelude {
     pub use crate::items::ItemId;
     pub use crate::items::Item;
     #[cfg(feature = "yew")]
-    pub use crate::items::{YewObj, ObjList, yew_impl::ObjMsg, yew_impl::LoadedItems, ObjView};
+    pub use crate::items::{YewObj, ObjList, yew_impl::ObjMsg, /*yew_impl::LoadedItems,*/ ObjView};
     //#[cfg(feature = "yew")]
     //pub use crate::events:;
 }
@@ -19,8 +19,25 @@ pub mod items;
 pub mod date;
 pub mod worms;
 pub mod plants;
+pub mod greenhouse;
 #[cfg(feature = "yew")]
 pub mod components;
+
+#[toml_cfg::toml_config]
+pub (crate) struct Config {
+    #[default("http://192.168.0.100")]
+    server_id: &'static str,
+    #[default(&Uuid::from_u128_le(17975531051516076104489778949011204464))]
+    greenhouse_namespace: &'static Uuid,
+}
+
+#[test]
+fn print_uuid() {
+    use std::str::FromStr;
+    let uuid = uuid::Uuid::from_str("70e96686-393e-4dba-9909-6f271bf6850d").unwrap();
+    assert_eq!(uuid, *CONFIG.greenhouse_namespace);
+    print!("{}", uuid.to_u128_le())
+}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Note {

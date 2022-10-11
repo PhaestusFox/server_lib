@@ -104,7 +104,8 @@ mod yew {
     use yew::*;
     impl YewObj for super::Plant {
         fn view(&self, ctx: &yew::Context<ObjView>) -> yew::Html {
-            let objs = LoadedItems::read();
+            let (cbr, _) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()).unwrap();
+            let objs = cbr.read_items();
             let id = self.id;
             html! {
                 <div id={id.to_string()}>

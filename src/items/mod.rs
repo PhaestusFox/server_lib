@@ -277,8 +277,6 @@ impl<T> Extend for T  { }
 #[cfg(feature = "yew")]
 pub mod yew_impl {
     use std::rc::Rc;
-
-    use bevy_reflect::ReflectMut;
     use yew::*;
     use crate::*;
 
@@ -314,46 +312,6 @@ pub mod yew_impl {
     pub struct ObjList{
         cb_id: Option<usize>,
     }
-    pub struct LoadedItems(std::sync::RwLock<std::collections::HashMap<ItemId, Box<dyn Item>>>);
-
-    pub(crate) static LOADED_ITEMS: once_cell::sync::Lazy<LoadedItems> = once_cell::sync::Lazy::new(||
-        LoadedItems(std::sync::RwLock::new(std::collections::HashMap::default())));
-
-    impl LoadedItems {
-        pub fn read() -> std::sync::RwLockReadGuard<'static, std::collections::HashMap<ItemId, Box<dyn Item>>> {
-            LOADED_ITEMS.0.read().unwrap()
-        }
-        pub fn write() -> std::sync::RwLockWriteGuard<'static, std::collections::HashMap<ItemId, Box<dyn Item>>>{
-            LOADED_ITEMS.0.write().unwrap()
-        }
-        pub fn load(mut item: Box<dyn Item>) -> ItemId {
-            let id = if item.id().is_nil() {
-                let id = ItemId::new();
-                item.set_id(id);
-                id
-            } else {
-                item.id()
-            };
-            LoadedItems::write().insert(id, item);
-            id
-        }
-        pub fn get<T: Reflect + Clone>(item: ItemId, field: &'static str) -> Option<T> {
-            use bevy_reflect::ReflectRef;
-            match LoadedItems::read().get(&item)?.reflect_ref() {
-                ReflectRef::Struct(s) => {s.get_field::<T>(field).cloned()},
-                _ => unimplemented!()
-            }
-        }
-        pub fn set<T: Reflect>(item: ItemId, field: &'static str, new_val: T) -> anyhow::Result<()> {
-            match LoadedItems::write().get_mut(&item).ok_or(anyhow::anyhow!("failed to find item {:?}", item))?.reflect_mut() {
-                ReflectMut::Struct(s) => {if let Some(val) = s.get_field_mut::<T>(field) {
-                    *val = new_val;
-                }},
-                _ => unimplemented!()
-            }
-            Ok(())
-        }
-    }
 
     impl Component for ObjList {
         type Message = ObjMsg;
@@ -386,10 +344,11 @@ pub mod yew_impl {
             }
         }
 
-        fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
+        fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
             match msg {
                 ObjMsg::Load(item) => {
-                    LoadedItems::load(item);
+                    let (cbr, _) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()).unwrap();
+                    cbr.load(item);
                     true
                 },
                 ObjMsg::Get(_) => {false},
@@ -402,7 +361,7 @@ pub mod yew_impl {
                         4 => super::TestString {id: ItemId::from_u128(0), data: "Alt 1".to_string()},
                         _ => {return false;}
                     };
-                    _ctx.link().send_message(ObjMsg::Load(Box::new(obj)));
+                    ctx.link().send_message(ObjMsg::Load(Box::new(obj)));
                     false
                 },
                 ObjMsg::Apply(_) => {todo!()},
@@ -446,8 +405,10 @@ pub mod yew_impl {
             }
         }
         fn view(&self, ctx: &Context<Self>) -> Html {
+            let (cbr, _) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()).unwrap();
             let id = ctx.props().id;
-            if let Some(data) = LoadedItems::read().get(&id) {
+            let objs = cbr.read_items();
+            if let Some(data) = objs.get(&id) {
                 if ctx.props().edit {
                     data.yew_edit(ctx)
                 } else {
@@ -460,20 +421,13 @@ pub mod yew_impl {
         fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
             match msg {
                 ObjMsg::Apply(data) => {
-                    let mut lock = LoadedItems::write();
-                    if let Some(obj) = lock.get_mut(&ctx.props().id) {
-                        obj.apply(data.as_reflect());
-                        if let (bevy_reflect::ReflectRef::Struct(s), bevy_reflect::ReflectRef::Struct(d)) = (obj.reflect_ref(), data.reflect_ref()) {
-                            web_sys::console::log_1(&format!("{:?}:{:?}", s.get_field::<crate::worms::Gender>("gender"), d.field_len()).into());
-                        }
-                        true
-                    } else {
-                        false
-                    }
+                    let (cbr, _) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()).unwrap();
+                    cbr.apply(data.as_ref())
                 },
                 ObjMsg::Get(_) => {false},
                 ObjMsg::Load(item) => {
-                    LoadedItems::load(item);
+                    let (cbr, _) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()).unwrap();
+                    cbr.load(item);
                     true
                 },
                 ObjMsg::Test(id) => {
@@ -489,7 +443,8 @@ pub mod yew_impl {
                     false
                 },
                 ObjMsg::SetEdit(to) => {
-                    if let Err(e) = LoadedItems::set(ctx.props().id, "edit", to) {
+                    let (cbr, _) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()).unwrap();
+                    if let Err(e) = cbr.set(ctx.props().id, "edit", to) {
                         web_sys::console::error_1(&e.to_string().into());
                         false
                     } else {
