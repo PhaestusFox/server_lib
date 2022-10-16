@@ -167,13 +167,13 @@ impl Database {
         Ok(ser.deserialize(&mut de).unwrap())
     }
     #[inline(always)]
-    pub fn get<'de, T: Deserialize<'de> + Reflect>(&self, key: ItemId) -> anyhow::Result<T> {
-        match self.get_obj(key)?.take() {
-            Err(e) => Err(DbError::TypeMissMatch(e).into()),
-            Ok(w) => Ok(w)
-        }
+    pub fn get_item<T: serde::de::DeserializeOwned>(&self, key: ItemId) -> anyhow::Result<T> {
+        let type_name = String::from_utf8(self.type_tree.get(key)?.ok_or_else(|| DbError::NoTypeName)?.to_vec())?;
+        if type_name != std::any::type_name::<T>() {anyhow::bail!("{} != {}", type_name, std::any::type_name::<T>());}
+        let data = String::from_utf8(self.db.get(key)?.ok_or_else(|| DbError::NoData)?.to_vec())?;
+        Ok(ron::from_str(&data)?)
     }
-    pub fn get_item(&self, key: ItemId) -> Result<ItemData, DbError> {
+    pub fn get_item_data(&self, key: ItemId) -> Result<ItemData, DbError> {
         let name = if let Some(v) = self.type_tree.get(key)? {
             String::from_utf8(v.to_vec())?
         } else {return Err(DbError::NoTypeName);};
@@ -201,7 +201,13 @@ impl Database {
         self.db.insert(uuid, item.data.as_str())?;
         Ok(ItemId(uuid))
     }
-    pub fn insert_item(&self,id: ItemId, item: &ItemData) -> Result<(), DbError> {
+    pub fn insert_item<T: Serialize>(&self, id: ItemId, item: T) -> anyhow::Result<()> {
+        let ser = ron::to_string(&item)?;
+        self.type_tree.insert(id, std::any::type_name::<T>())?;
+        self.db.insert(id, ser.as_str())?;
+        Ok(())
+    }
+    pub fn insert_item_data(&self, id: ItemId, item: &ItemData) -> Result<(), DbError> {
         self.type_tree.insert(id, item.type_name.as_str())?;
         self.db.insert(id, item.data.as_str())?;
         Ok(())
@@ -220,7 +226,9 @@ impl Database {
 fn type_registry() -> bevy_reflect::TypeRegistry {
     let mut type_reg = bevy_reflect::TypeRegistry::new();
     type_reg.register::<ItemId>();
+    type_reg.register::<Vec<ItemId>>();
     worms::register_types(&mut type_reg);
+    greenhouse::register_types(&mut type_reg);
     type_reg
 }
 

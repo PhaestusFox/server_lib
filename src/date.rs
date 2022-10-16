@@ -4,6 +4,28 @@ use bevy_reflect::prelude::*;
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Reflect)]
 #[reflect_value(Serialize)]
 pub struct Date(pub(crate) u32);
+impl std::str::FromStr for Date {
+    type Err = &'static str;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        #[cfg(feature="yew")]
+        web_sys::console::log_1(&s.into());
+        let mut segs = if s.contains("-") {s.split('-')} else {s.split('/')};
+        let year = if let Some(v) = segs.next() {match v.parse() {
+            Ok(v) => v,
+            Err(_) => return Err("Failed to parse year")
+        }} else {return Err("No Year Seg");};
+        let month = if let Some(v) = segs.next() {match v.parse() {
+            Ok(v) => v,
+            Err(_) => return Err("Failed to parse month")
+        }} else {return Err("No Month Seg");};
+        let day = if let Some(v) = segs.next() {match v.parse() {
+            Ok(v) => v,
+            Err(_) => return Err("Failed to parse day")
+        }} else {return Err("No day Seg");};
+        Ok(Date::new_ymd(year, month, day))
+    }
+}
+
 impl Date {
     pub fn new_ymd(year: i16, month: u8, day: u8) -> Date {
         assert!(day <= if month == 2 {29} else {days_in_month(month)} && day > 0);
@@ -64,6 +86,10 @@ impl Date {
             month = 12;
         }
         Date::new_ymd(year, month, day)
+    }
+
+    pub fn to_web_string(&self) -> String {
+        format!("{}-{}-{}", self.year(), self.month(), self.day())
     }
 }
 
@@ -131,6 +157,16 @@ const fn is_leap_year(year: i16) -> bool {
     } else {
         false
     }
+}
+
+#[cfg(feature="rocket")]
+impl<'a> rocket::request::FromParam<'a> for Date {
+    type Error = <Date as std::str::FromStr>::Err;
+    fn from_param(str: &'a str) -> Result<Self, Self::Error> {
+        use std::str::FromStr;
+        Date::from_str(str)
+    }
+
 }
 
 #[cfg(test)]

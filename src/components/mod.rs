@@ -37,10 +37,10 @@ impl<T: Reflect + Clone + FromStr + IntoEnumIterator + std::fmt::Display + Into<
                     Err(_) => {web_sys::console::error_1(&format!{"Failed to parse '{}' to {}", val, std::any::type_name::<T>()}.into());}
                 };
             }}>
-                {T::iter().map(|v| {
+                {for T::iter().map(|v| {
                     let v: &'static str = v.into();
                     html!{<option selected={current == v}>{v}</option>}
-                }).collect::<Html>()}
+                })}
             </select>
         }
     }
@@ -114,6 +114,7 @@ impl Component for ItemIdInput {
 
 #[derive(Clone)]
 pub struct CallbackReg{
+    type_reg: Rc<bevy_reflect::TypeRegistry>,
     loaded_items: Rc<RwLock<HashMap<ItemId, Box<dyn Item>>>>,
     reg: Rc<RwLock<HashMap<usize, Callback<()>>>>,
     next: Rc<RwLock<usize>>,
@@ -128,10 +129,37 @@ impl PartialEq for CallbackReg {
 impl CallbackReg {
     pub fn new() -> CallbackReg {
         CallbackReg{
+            type_reg: Rc::new(crate::type_registry()),
             loaded_items: Default::default(),
             reg: Default::default(),
             next: Default::default(),
         }
+    }
+
+    pub fn get_itemdata(&self, id: ItemId) -> Option<ItemData> {
+        let loaded = self.loaded_items.read().unwrap();
+        let item = loaded.get(&id)?;
+        let reg = if let Some(reg) = self.type_reg.get(item.type_id()) {reg} else {
+            web_sys::console::warn_1(&format!("{}: type not registred", item.type_name()).into());
+            return None;
+        };
+        let traitid = reg.data::<ReflectSerialize>()?;
+        let data = match traitid.get_serializable(item.as_reflect()) {
+            bevy_reflect::serde::Serializable::Owned(v) => ron::to_string(&v).ok()?,
+            bevy_reflect::serde::Serializable::Borrowed(v) => ron::to_string(v).ok()?,
+        };
+        Some(ItemData { type_name: reg.type_name().to_string(), data })
+    }
+
+    pub fn as_item(&self, item: Box<dyn Reflect>) -> Result<Box<dyn Item>, Box<dyn Reflect>> {
+        let reg = if let Some(v) = self.type_reg.get(item.type_id()) {v} else {web_sys::console::warn_1(&format!("type {} is not in registry", item.type_name()).into()); return Err(item);};
+        let reg = if let Some(v) = reg.data::<crate::items::ReflectToItem>() {v} else {web_sys::console::warn_1(&format!("type {} does no registor to_item", item.type_name()).into()); return Err(item);};
+        let item = reg.get_boxed(item)?;
+        Ok(item.to_item())
+    }
+
+    pub fn type_reg(&self) -> Rc<bevy_reflect::TypeRegistry> {
+        self.type_reg.clone()
     }
 
     pub fn reg_cb(&self, cb: Callback<()>) -> usize {
@@ -174,12 +202,7 @@ impl CallbackReg {
         use bevy_reflect::ReflectRef;
         match self.read_items().get(&item)?.reflect_ref() {
             ReflectRef::Struct(s) => {s.get_field::<T>(field).cloned()},
-            ReflectRef::TupleStruct(_) => todo!(),
-            ReflectRef::Tuple(_) => todo!(),
-            ReflectRef::List(_) => todo!(),
-            ReflectRef::Array(_) => todo!(),
-            ReflectRef::Map(_) => todo!(),
-            ReflectRef::Value(s) => todo!("{:?}", s),
+            _ => unimplemented!(),
         }
     }
     pub fn set<T: Reflect>(&self, item: ItemId, field: &'static str, new_val: T) -> anyhow::Result<()> {
@@ -187,10 +210,10 @@ impl CallbackReg {
         match self.write_items().get_mut(&item).ok_or(anyhow::anyhow!("failed to find item {:?}", item))?.reflect_mut() {
             ReflectMut::Struct(s) => {if let Some(val) = s.get_field_mut::<T>(field) {
                 *val = new_val;
-                self.emit();
             }},
             _ => unimplemented!()
         }
+        self.emit();
         Ok(())
     }
 

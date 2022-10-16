@@ -216,6 +216,21 @@ pub trait Item: Reflect + Extend {
     fn set_id(&mut self, id: ItemId);
 }
 
+#[bevy_reflect::reflect_trait]
+pub trait ToItem {
+    fn as_item(&self) -> &dyn Item;
+    fn to_item(self: Box<Self>) -> Box<dyn Item>;
+}
+
+impl<T: Item> ToItem for T {
+    fn as_item(&self) -> &dyn Item {
+        self as &dyn Item
+    }
+    fn to_item(self:Box<Self>) -> Box<dyn Item> {
+        self as Box<dyn Item>
+    }
+}
+
 impl PartialEq for dyn Item {
     fn eq(&self, other: &Self) -> bool {
         self.reflect_partial_eq(other.as_reflect()).unwrap()
@@ -318,15 +333,15 @@ pub mod yew_impl {
         type Properties = Props;
 
         fn create(ctx: &Context<Self>) -> Self {
-            web_sys::console::log_1(&"here".into());
+            web_sys::console::log_1(&"Create List".into());
             if let Some((cb,_)) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()) {
                 let id = cb.reg_cb(ctx.link().callback(|_| ObjMsg::CallBack));
-                web_sys::console::log_1(&"here1".into());
+                web_sys::console::log_1(&"Found CBR".into());
                 ObjList {
                     cb_id: Some(id),
                 }
             } else {
-                web_sys::console::log_1(&"here2".into());
+                web_sys::console::log_1(&"No CBR".into());
                 ObjList {
                     cb_id: None,
                 }
@@ -415,6 +430,7 @@ pub mod yew_impl {
                     data.yew_view(ctx)
                 }
             } else {
+                ctx.link().send_message(ObjMsg::Get(id));
                 html!{"loading..."}
             }
         }
@@ -424,11 +440,57 @@ pub mod yew_impl {
                     let (cbr, _) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()).unwrap();
                     cbr.apply(data.as_ref())
                 },
-                ObjMsg::Get(_) => {false},
+                ObjMsg::Get(id) => {
+                    web_sys::console::log_1(&"ObjView Get".into());
+                    let cb = ctx.link().callback(|msg| msg);
+                    let cbr = if let Some((reg, _)) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()) {reg} else {
+                        web_sys::console::error_1(&"filed to get callbackreg from context".into());
+                        return false;
+                    };
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let res = gloo_net::http::Request::get(&format!("{}/db_item/{}", CONFIG.server_id, id.0))
+                        .send().await
+                        .unwrap();
+                        if res.status() == 200 {
+                            if let Ok(list) = ron::from_str::<ItemData>(&res.text().await.unwrap()) {
+                                if let Some(reg) = cbr.type_reg().get_with_name(&list.type_name) {
+                                    let deser = if let Some(ser) = reg.data::<ReflectDeserialize>() {
+                                        ser
+                                    } else {
+                                        web_sys::console::error_1(&format!("{} does not reflect Deserialize", reg.type_name()).into());
+                                        return;
+                                    };
+                                    let mut de = ron::Deserializer::from_str(&list.data).unwrap();
+                                    match deser.deserialize(&mut de) {
+                                        Ok(val) => {
+                                            let mut item = match cbr.as_item(val) {
+                                                Ok(v) => v,
+                                                Err(_) => return,
+                                            };
+                                            item.set_id(id);
+                                            cb.emit(ObjMsg::Load(item))},
+                                        Err(e) => {
+                                            web_sys::console::error_1(&e.to_string().into());
+                                            return;
+                                        }
+                                    }
+                                } else {
+                                    web_sys::console::error_1(&format!("{} is not registured with reflect", list.type_name).into());
+                                    return;
+                                };
+                            } else {
+                                web_sys::console::error_1(&"ron failed to make item".into());
+                            }
+                        } else {
+                            web_sys::console::error_1(&format!("server responed with: {} status code", res.status()).into())
+                        }
+                    });
+                    false
+                },
                 ObjMsg::Load(item) => {
                     let (cbr, _) = ctx.link().context::<crate::components::CallbackReg>(Callback::noop()).unwrap();
                     cbr.load(item);
-                    true
+                    false
                 },
                 ObjMsg::Test(id) => {
                     let obj = match id {

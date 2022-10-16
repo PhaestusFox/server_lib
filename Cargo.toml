@@ -25,8 +25,9 @@ strum = {version = "0.24.1", features=["derive"]}
 derive_more = {version="0.99.17"}
 chrono = "0.4.22"
 wasm-bindgen-futures = {version = "0.4", optional = true}
-gloo-net = {version = "*", optional = true}
+gloo-net = {git="https://github.com/rustwasm/gloo.git", optional = true}
 toml-cfg = "0.1"
+futures = "*"
 
 [features]
 default = ["yew", "rocket"]
