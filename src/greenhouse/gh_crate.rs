@@ -1,18 +1,20 @@
 use std::{collections::HashMap, borrow::Cow};
-use bevy_reflect::Reflect;
+use bevy_reflect::{Reflect, TypeRegistry, ReflectSerialize, ReflectDeserialize, GetTypeRegistration, TypeRegistration};
+use ::serde::{Serialize, Deserialize};
 use strum::{IntoStaticStr, EnumIter, IntoEnumIterator};
 use crate::ItemId;
 use enum_utils::FromStr;
+
+mod serde;
 
 #[cfg(feature = "yew")]
 use yew::*;
 
 type FiledType = Cow<'static, str>;
 // type FiledType = &'static str;
-#[derive(Debug, Default)]
-pub struct Filds(Vec<Box<dyn CropData>>);
-
-impl Filds {
+#[derive(Default)]
+pub struct Fields(Vec<Box<dyn CropData>>);
+impl Fields {
     #[inline(always)]
     fn contains_key(&self, key: &FiledType) -> bool {
         for i in self.0.iter() {
@@ -53,17 +55,17 @@ impl Filds {
     }
 }
 
-#[derive(Debug, Reflect, Default)]
+#[derive(Reflect, Default)]
 pub struct Crate {
     pub id: ItemId,
     pub crop: Crop,
     #[reflect(ignore)]
-    pub filds: Filds,
+    pub fields: Fields,
 }
 
 impl Crop {
-    fn default_filds(&self) -> Filds {
-        let mut map = Filds::default();
+    fn default_filds(&self) -> Fields {
+        let mut map = Fields::default();
         match self {
             Crop::None => {},
             Crop::Tomato => {
@@ -80,7 +82,7 @@ impl Crop {
     }
 }
 
-#[derive(Debug, Default, IntoStaticStr, Reflect, Clone, FromStr, PartialEq, Eq, EnumIter, Copy)]
+#[derive(Debug, Default, IntoStaticStr, Reflect, Clone, FromStr, PartialEq, Eq, EnumIter, Copy, ::serde::Serialize, ::serde::Deserialize)]
 pub enum Crop {
     #[default]
     None,
@@ -88,18 +90,14 @@ pub enum Crop {
     Parsley,
 }
 
+#[bevy_reflect::reflect_trait]
 pub trait CropData: Reflect {
     #[cfg(feature = "yew")]
     fn view(&self) -> yew::Html;
     #[cfg(feature = "yew")]
     fn edit(&self, cb: yew::Callback<CrateMsg>, node: &yew::NodeRef) -> yew::Html;
     fn fild_type(&self) -> FiledType;
-}
-
-impl std::fmt::Debug for Box<dyn CropData> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Fuck You")
-    }
+    fn get_type_registration(&self) -> TypeRegistration;
 }
 
 #[cfg(feature = "yew")]
@@ -155,18 +153,18 @@ impl yew::Component for CrateView {
                 {gh_crate.crop.edit(ctx.link().callback(|msg| msg), self.nodes.get(&Cow::Borrowed("Crop")).unwrap())}
                 {for gh_crate.crop.default_filds().into_iter().map(|v| {
                     let f = v.fild_type();
-                    if gh_crate.filds.contains_key(&f) {
-                        gh_crate.filds.get(&f).unwrap().edit(cb.clone(), self.nodes.get(&f).unwrap())
+                    if gh_crate.fields.contains_key(&f) {
+                        gh_crate.fields.get(&f).unwrap().edit(cb.clone(), self.nodes.get(&f).unwrap())
                     } else {
                         let res = v.edit(cb.clone(), self.nodes.get(&f).unwrap());
-                        gh_crate.filds.set(v);
+                        gh_crate.fields.set(v);
                         res
                     }
                 })}
                 </>
             } else {
                 <>{gh_crate.crop.view()}
-                {for gh_crate.filds.iter().map(|d| d.view())}</>
+                {for gh_crate.fields.iter().map(|d| d.view())}</>
             }
             </>
         }
@@ -196,7 +194,7 @@ impl yew::Component for CrateView {
                     return false;
                 };
                 gh_crate.crop = crop;
-                gh_crate.filds.clear();
+                gh_crate.fields.clear();
                 true
             }
             CrateMsg::SetField(val) => {
@@ -208,7 +206,7 @@ impl yew::Component for CrateView {
                     web_sys::console::error_1(&format!("Item {:?} is not Crate", ctx.props().id).into());
                     return false;
                 };
-                gh_crate.filds.set(val);
+                gh_crate.fields.set(val);
                 true
             }
         }
@@ -225,14 +223,16 @@ impl yew::Component for CrateView {
     
 // }
 
-#[derive(Debug, IntoStaticStr, EnumIter, FromStr, Reflect, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, IntoStaticStr, EnumIter, FromStr, Reflect, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[reflect(CropData, Serialize, Deserialize)]
 enum Size {
     Small,
     Normal,
     Large,
 }
 
-#[derive(Debug, IntoStaticStr, EnumIter, FromStr, Reflect, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, IntoStaticStr, EnumIter, FromStr, Reflect, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[reflect(CropData, Serialize, Deserialize)]
 enum Packing {
     SmallPunnet,
     LargePunnet,
@@ -270,6 +270,9 @@ impl CropData for Size {
     fn fild_type(&self) -> FiledType {
         "Size".into()
     }
+    fn get_type_registration(&self) -> TypeRegistration {
+        <Self as bevy_reflect::GetTypeRegistration>::get_type_registration()
+    }
 }
 
 impl CropData for Crop{
@@ -303,6 +306,9 @@ impl CropData for Crop{
     fn fild_type(&self) -> FiledType {
         "Crop".into()
     }
+    fn get_type_registration(&self) -> TypeRegistration {
+        <Self as bevy_reflect::GetTypeRegistration>::get_type_registration()
+    }
 }
 
 impl crate::Item for Crate {
@@ -325,7 +331,8 @@ impl crate::YewObj for Crate {
     }
 }
 
-#[derive(Debug, Reflect, PartialEq, Eq, IntoStaticStr, EnumIter, Clone, Copy, FromStr)]
+#[derive(Debug, Reflect, PartialEq, Eq, IntoStaticStr, EnumIter, Clone, Copy, FromStr, Serialize, Deserialize)]
+#[reflect(CropData, Serialize, Deserialize)]
 pub enum Grade {
     First,
     Second,
@@ -366,6 +373,9 @@ impl CropData for Grade {
     fn fild_type(&self) -> FiledType {
         "Grade".into()
     }
+    fn get_type_registration(&self) -> TypeRegistration {
+        <Self as bevy_reflect::GetTypeRegistration>::get_type_registration()
+    }
 }
 
 #[cfg(feature = "yew")]
@@ -405,9 +415,13 @@ impl CropData for Packing {
     fn fild_type(&self) -> FiledType {
         "Packing".into()
     }
+    fn get_type_registration(&self) -> TypeRegistration {
+        <Self as bevy_reflect::GetTypeRegistration>::get_type_registration()
+    }
 }
 
-#[derive(Debug, IntoStaticStr, EnumIter, FromStr, Reflect, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, IntoStaticStr, EnumIter, FromStr, Reflect, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[reflect(CropData, Serialize, Deserialize)]
 enum ParsleyType {
     Curly,
     Flat
@@ -425,9 +439,13 @@ impl CropData for ParsleyType {
     fn fild_type(&self) -> FiledType {
         "Type".into()
     }
+    fn get_type_registration(&self) -> TypeRegistration {
+        <Self as bevy_reflect::GetTypeRegistration>::get_type_registration()
+    }
 }
 
-#[derive(Debug, IntoStaticStr, EnumIter, FromStr, Reflect, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, IntoStaticStr, EnumIter, FromStr, Reflect, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[reflect(CropData, Serialize, Deserialize)]
 enum TomatoType {
     Normal,
     Cherry
@@ -445,4 +463,40 @@ impl CropData for TomatoType {
     fn fild_type(&self) -> FiledType {
         "Type".into()
     }
+    fn get_type_registration(&self) -> TypeRegistration {
+        <Self as bevy_reflect::GetTypeRegistration>::get_type_registration()
+    }
+}
+
+#[test]
+fn serde_test() {
+    use ::serde::de::DeserializeSeed;
+    let mut type_reg = bevy_reflect::TypeRegistry::default();
+    register_types(&mut type_reg);
+    let gh_crate = Crate {
+        id: ItemId::from_u128(777),
+        crop: Crop::Tomato,
+        fields: Crop::Tomato.default_filds()
+    };
+    let ser = ron::to_string(&serde::CrateSerializer::new(&gh_crate, &type_reg)).unwrap();
+    println!("ser = {}", ser);
+    let deserializer = serde::CrateDeserializer {
+        type_registry: &type_reg
+    };
+    let mut ron_de = ron::Deserializer::from_str(&ser).unwrap();
+    let de = deserializer.deserialize(&mut ron_de).unwrap();
+    println!("de = {:?}", de.crop);
+    for f in de.fields.iter() {
+        println!("{}", f.fild_type())
+    }
+}
+
+fn register_types(type_reg: &mut TypeRegistry) {
+    type_reg.register::<Crate>();
+    type_reg.register::<Crop>();
+    type_reg.register::<TomatoType>();
+    type_reg.register::<Packing>();
+    type_reg.register::<Size>();
+    type_reg.register::<ParsleyType>();
+    type_reg.register::<Grade>();
 }
