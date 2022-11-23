@@ -7,6 +7,7 @@ use enum_utils::FromStr;
 use strum::{EnumIter, IntoStaticStr};
 use bevy_reflect::Reflect;
 
+#[cfg(feature = "yew")]
 mod gh_crate;
 
 pub(crate) fn register_types(type_reg: &mut bevy_reflect::TypeRegistry) {
