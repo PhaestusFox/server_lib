@@ -21,8 +21,8 @@ pub enum PlantTypes {
     Nesturtium,
 }
 
-#[derive(Debug, FromStr, IntoStaticStr, EnumIter, Serialize, Deserialize, Clone, Reflect, Display, Copy, PartialEq)]
-#[reflect_value(Serialize, Deserialize)]
+#[derive(Debug, FromStr, IntoStaticStr, EnumIter, Serialize, Deserialize, Clone, Reflect, Display, Copy, PartialEq, FromReflect)]
+#[reflect(Serialize, Deserialize)]
 pub enum Stage {
     Planted,
     Sprout,
@@ -36,6 +36,7 @@ pub enum Stage {
 enum Event {
     ChangedStage(ItemId, Stage, Date),
 }
+
 #[derive(Debug, Serialize, Deserialize, Reflect, PartialEq)]
 #[reflect(Serialize, Deserialize, PartialEq)]
 pub struct Plant {
@@ -120,6 +121,9 @@ mod yew {
                 }
                 </div>
             }
+        }
+        fn view_no_context(&self) -> Html {
+            todo!()
         }
     }
 }

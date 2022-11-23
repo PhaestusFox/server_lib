@@ -221,6 +221,12 @@ impl Database {
             db
         })
     }
+
+    pub fn remove(&self, id: ItemId) -> Result<(), DbError> {
+        self.db.remove(id)?;
+        self.type_tree.remove(id)?;
+        Ok(())
+    }
 }
 
 fn type_registry() -> bevy_reflect::TypeRegistry {

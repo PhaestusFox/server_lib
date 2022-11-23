@@ -1,19 +1,19 @@
 use super::*;
 use std::collections::HashSet;
-use web_sys::HtmlInputElement;
+use web_sys::{HtmlInputElement, HtmlElement};
 use ::yew::*;
 use std::str::FromStr;
 
 impl YewObj for Crate {
-    fn view(&self, _ctx: &::yew::Context<ObjView>) -> Html {
+    fn view_no_context(&self) -> Html {
         let id = self.id;
         html! {
             <div class="crate" id={id.to_string()}>
-                <div class="crop tooltip"><strong>{self.crop}</strong>
+                <div class="crop tooltip"><strong>{self.crop} {" "}</strong>
                 <span class="tooltiptext">{self.id.to_string()}</span>
                 </div>
-                <strong class="size">{self.size}</strong>
-                <strong class="grade">{self.grade}</strong>
+                <strong class="size">{self.size} {" "}</strong>
+                <strong class="grade">{self.grade} {" "}</strong>
             </div>
         }
     }
@@ -27,6 +27,9 @@ impl YewObj for Crate {
             </div>
         }
     }
+    fn view(&self, _ctx: &Context<ObjView>) -> Html {
+        self.view_no_context()
+    }
 }
 use crate::components::CallbackReg;
 pub struct GreenHouse {
@@ -36,7 +39,15 @@ pub struct GreenHouse {
     date_node: NodeRef,
     items: HashSet<ItemId>,
     _sse: gloo_net::eventsource::futures::EventSource,
+    sum: HashSet<Crate>,
+    plot: Option<String>,
+    plot_ref: NodeRef,
 }
+
+impl GreenHouse {
+    const MATCH_ITEM_ID: u128 = 1419427672130092986314190298487057552; //01115f2f-f92b-49d7-8b77-842ba7d9ec90
+}
+
 impl Component for GreenHouse {
     type Message = GreenHouseMsg;
     type Properties = ();
@@ -47,7 +58,7 @@ impl Component for GreenHouse {
         let id = date_to_id(now_date);
         let cb = ctx.link().callback(|item| GreenHouseMsg::LoadList(item));
         wasm_bindgen_futures::spawn_local(async move {
-            let res = gloo_net::http::Request::get(&format!("{}/db_item/{}", CONFIG.server_id, id.0))
+            let res = gloo_net::http::Request::get(&format!("/db_item/{}", id.0))
             .send().await
             .unwrap();
             if res.status() == 200 {
@@ -67,7 +78,7 @@ impl Component for GreenHouse {
             }
         });
 
-        let mut sse = gloo_net::eventsource::futures::EventSource::new(&format!("greenhouse_events"/* , CONFIG.server_id*/)).unwrap();
+        let mut sse = gloo_net::eventsource::futures::EventSource::new("/greenhouse_events").unwrap();
         let sub = sse.subscribe("add").unwrap();
         let sub2 = sse.subscribe("remove").unwrap();
         let sub3 = sse.subscribe("update").unwrap();
@@ -105,19 +116,45 @@ impl Component for GreenHouse {
                 }
                 web_sys::console::log_1(&"EventSource Closed".into());
             });
+        let cb = ctx.link().callback(|plot| GreenHouseMsg::SetPlot(plot));
+        wasm_bindgen_futures::spawn_local(async move {
+            let now = chrono::Local::now();
+            let date = now.format("%Y-%m-%d");
+            let res = gloo_net::http::Request::get(&format!("/greenhouse_plot/{}", date))
+            .send().await
+            .unwrap();
+            if res.status() == 200 {
+                cb.emit(res.text().await.unwrap())
+            }
+        });
 
+        let cbr = CallbackReg::new();
+        cbr.load(Box::new(Crate {
+            id: ItemId::from_u128(GreenHouse::MATCH_ITEM_ID),
+            ..Default::default()
+        }));
+        cbr.load(Box::new(super::gh_crate::Crate {
+            id: ItemId::from_u128(777),
+            crop: super::gh_crate::Crop::Tomato,
+            ..Default::default()
+        }));
         GreenHouse {
-            data: CallbackReg::new(),
+            data: cbr,
             edit: None,
             date: now_date,
             items: Default::default(),
             date_node: NodeRef::default(),
             _sse: sse,
+            sum: HashSet::new(),
+            plot: None,
+            plot_ref: NodeRef::default(),
         }
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
         let date_node = self.date_node.clone();
+        let loaded_items = self.data.loaded_items.clone();
+        let match_item = ItemId::from_u128(GreenHouse::MATCH_ITEM_ID);
         html! {
             <ContextProvider<CallbackReg> context={self.data.clone()}>
                 <h1>{"GreenHouse"}</h1>
@@ -132,19 +169,34 @@ impl Component for GreenHouse {
                     <div class="edit">
                         <ObjView id={id} edit={true}/>
                         <button onclick={ctx.link().callback(|_| GreenHouseMsg::SaveCrate)}>{"Save"}</button>
+                        <button onclick={ctx.link().callback(|_| GreenHouseMsg::DeleteCrate)}>{"Delete"}</button>
                     </div>
                 }
                 <button onclick={ctx.link().callback(|_| GreenHouseMsg::NewCrate)}>{"New Crate"}</button>
-                <button onclick={|_| {
-                    wasm_bindgen_futures::spawn_local( async {
-                        let _ = gloo_net::http::Request::put(&format!("{}/greenhouse_events/add/{}/{}", CONFIG.server_id, CONFIG.greenhouse_namespace, Date::new_ymd(2022, 10, 11).to_web_string())).send().await;
-                    });
-                }}>{"add"}</button>
-                <button onclick={|_| {
-                    wasm_bindgen_futures::spawn_local( async {
-                        let _ = gloo_net::http::Request::put(&format!("{}/greenhouse_events/remove/{}/{}", CONFIG.server_id, CONFIG.greenhouse_namespace, Date::new_ymd(2022, 10, 11).to_web_string())).send().await;
-                    });
-                }}>{"remove"}</button>
+                <br/>
+                <br/>
+                <h2>{"Sum Mode"}</h2>
+                <ObjView id={match_item} edit={true}/>
+                <button onclick={ctx.link().callback(move |_| {
+                    let li = loaded_items.read().unwrap();
+                    let match_crate = li.get(&match_item).unwrap();
+                    GreenHouseMsg::AddToSum(match_crate.as_reflect().downcast_ref::<Crate>().unwrap().clone())
+                })}>{"add"}</button><br/>
+                {for self.sum.iter().map(|pat| {
+                    let loaded = self.data.loaded_items.read().unwrap();
+                    let sum = self.items.iter().map(|item| {
+                        loaded.get(item).unwrap().as_reflect().downcast_ref::<Crate>().unwrap()
+                    }).filter(|c| c.match_crate(pat)).count();
+                    let pat = *pat;
+                    html!{<>{pat.view_no_context()} {format!(" = {};", sum)} <button onclick={ctx.link().callback(move |_| GreenHouseMsg::RemoveFromSum(pat))}>{"remove"}</button><br/></> }
+                })}
+                if self.plot.is_some() {
+                    <br/>
+                    <h2>{"Sensor Data"}</h2>
+                    <div class="OuterSensor" ref={self.plot_ref.clone()}> </div>
+                }
+                <br/>
+                <super::gh_crate::CrateView id={ItemId::from_u128(777)} edit = true/>
             </ContextProvider<CallbackReg>>
         }
     }
@@ -160,7 +212,7 @@ impl Component for GreenHouse {
                     return false;
                 };
                 wasm_bindgen_futures::spawn_local(async move {
-                    let res = gloo_net::http::Request::get(&format!("{}/db_item/{}", CONFIG.server_id, id.0))
+                    let res = gloo_net::http::Request::get(&format!("/db_item/{}", id.0))
                     .send().await
                     .unwrap();
                     web_sys::console::log_1(&format!("got {}", id.to_string()).into());
@@ -209,11 +261,13 @@ impl Component for GreenHouse {
                 self.data.load(item);
                 false
             },
-            SetDate(new_date) => {self.date = new_date;
+            SetDate(new_date) => {
+                //get data for new date
+                self.date = new_date;
                 let id = date_to_id(new_date);
                 let cb = ctx.link().callback(|item| GreenHouseMsg::LoadList(item));
                 wasm_bindgen_futures::spawn_local(async move {
-                    let res = gloo_net::http::Request::get(&format!("{}/db_item/{}", CONFIG.server_id, id.0))
+                    let res = gloo_net::http::Request::get(&format!("/db_item/{}", id.0))
                     .send().await
                     .unwrap();
                     if res.status() == 200 {
@@ -234,6 +288,17 @@ impl Component for GreenHouse {
                         cb.emit(Vec::new());
                     }
                 });
+                //get plot for date
+                self.plot = None;
+                let cb = ctx.link().callback(|plot| GreenHouseMsg::SetPlot(plot));
+                wasm_bindgen_futures::spawn_local(async move {
+                    let res = gloo_net::http::Request::get(&format!("/greenhouse_plot/{}", new_date.to_web_string()))
+                    .send().await
+                    .unwrap();
+                    if res.status() == 200 {
+                        cb.emit(res.text().await.unwrap())
+                    }
+                });
                 false},
             NewCrate => {let id = self.data.load(Box::new(Crate::default())); self.edit = Some(id); true},
             SaveCrate => {
@@ -244,11 +309,11 @@ impl Component for GreenHouse {
                 let event = ServerSideEvent::AddedItem(id, self.date);
                 wasm_bindgen_futures::spawn_local(async move {
                     if let Ok(body) = ron::to_string(&item) {
-                        if let Err(e) = gloo_net::http::Request::put(&format!("{}/db_item/{}", CONFIG.server_id, id.to_string())).body(body).send().await {
+                        if let Err(e) = gloo_net::http::Request::put(&format!("/db_item/{}", id.to_string())).body(body).send().await {
                             web_sys::console::error_1(&e.to_string().into());
                         };
                         if let Ok(body) = ron::to_string(&event) {
-                            if let Err(e) = gloo_net::http::Request::put(&format!("{}/greenhouse_event", CONFIG.server_id)).body(body).send().await {
+                            if let Err(e) = gloo_net::http::Request::put("/greenhouse_event").body(body).send().await {
                                 web_sys::console::error_1(&e.to_string().into());
                             };
                         }
@@ -256,6 +321,23 @@ impl Component for GreenHouse {
                 });
                 true
             },
+            DeleteCrate => {
+                let id = self.edit.expect("Can only delete when have edit");
+                self.data.loaded_items.write().unwrap().remove(&id);
+                self.edit = None;
+                let event = ServerSideEvent::RemovedItem(id, self.date);
+                wasm_bindgen_futures::spawn_local(async move {
+                        if let Err(e) = gloo_net::http::Request::delete(&format!("/db_item/{}", id.to_string())).send().await {
+                            web_sys::console::error_1(&e.to_string().into());
+                        };
+                        if let Ok(body) = ron::to_string(&event) {
+                            if let Err(e) = gloo_net::http::Request::put("/greenhouse_event").body(body).send().await {
+                                web_sys::console::error_1(&e.to_string().into());
+                            };
+                        }
+                });
+                true
+            }
             EditCrate(id) => {
                 if self.items.remove(&id) {
                     self.edit = Some(id);
@@ -291,6 +373,17 @@ impl Component for GreenHouse {
                         false
                     }
                 }
+            },
+            AddToSum(s_crate) => {
+                self.sum.insert(s_crate);
+                true
+            },
+            RemoveFromSum(s_crate) => {
+                self.sum.remove(&s_crate)
+            }
+            SetPlot(plot) => {
+                self.plot = Some(plot);
+                true
             }
         }
     }
@@ -302,16 +395,9 @@ impl Component for GreenHouse {
             date_val.set_value(&val);
             web_sys::console::log_1(&val.into());
         }
+        if let Some(plot) = &self.plot {
+            let plot_div = self.plot_ref.cast::<HtmlElement>().expect("plot to exist");
+            plot_div.set_inner_html(plot);
+        }
     }
-}
-
-pub enum GreenHouseMsg {
-    Get(ItemId),
-    LoadList(Vec<ItemId>),
-    LoadItem(Box<dyn Item>),
-    SetDate(Date),
-    ServerEvent(ServerSideEvent),
-    NewCrate,
-    EditCrate(ItemId),
-    SaveCrate,
 }

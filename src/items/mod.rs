@@ -315,6 +315,8 @@ pub mod yew_impl {
         fn edit(&self, ctx: &Context<ObjView>) -> Html {
             self.view(ctx)
         }
+
+        fn view_no_context(&self) -> Html;
     }
 
     impl PartialEq for dyn YewObj {
@@ -545,6 +547,9 @@ pub mod yew_impl {
                 {&self.data}
             }
         }
+        fn view_no_context(&self) -> Html {
+            todo!()
+        }
     }
 
     impl Item for bevy_reflect::DynamicStruct {
@@ -569,6 +574,9 @@ pub mod yew_impl {
             html! {
                 {format!("{:?}", self)}
             }
+        }
+        fn view_no_context(&self) -> Html {
+            todo!()
         }
     }
 }

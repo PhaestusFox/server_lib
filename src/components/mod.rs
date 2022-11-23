@@ -115,7 +115,7 @@ impl Component for ItemIdInput {
 #[derive(Clone)]
 pub struct CallbackReg{
     type_reg: Rc<bevy_reflect::TypeRegistry>,
-    loaded_items: Rc<RwLock<HashMap<ItemId, Box<dyn Item>>>>,
+    pub loaded_items: Rc<RwLock<HashMap<ItemId, Box<dyn Item>>>>,
     reg: Rc<RwLock<HashMap<usize, Callback<()>>>>,
     next: Rc<RwLock<usize>>,
 }
@@ -183,7 +183,7 @@ impl CallbackReg {
         }
     }
 
-    fn write_items(&self) -> std::sync::RwLockWriteGuard<std::collections::HashMap<ItemId, Box<dyn Item>>>{
+    pub fn write_items(&self) -> std::sync::RwLockWriteGuard<std::collections::HashMap<ItemId, Box<dyn Item>>>{
         self.loaded_items.write().unwrap()
     }
     pub fn load(&self, mut item: Box<dyn Item>) -> ItemId {

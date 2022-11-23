@@ -9,8 +9,8 @@ pub fn register_types(reg: &mut bevy_reflect::TypeRegistry) {
     reg.register::<Stage>();
 }
 
-#[derive(Debug, Deserialize, Serialize, Reflect, Clone, Copy, FromStr, EnumIter, IntoStaticStr)]
-#[reflect_value(Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Reflect, Clone, Copy, FromStr, EnumIter, IntoStaticStr, FromReflect)]
+#[reflect(Deserialize, Serialize)]
 pub enum Gender {
     Unknown,
     Male,
@@ -49,8 +49,8 @@ enum Event {
     Added(ItemId, ItemId),
 }
 
-#[derive(Debug, Deserialize, Serialize, Reflect, Clone, Copy, FromStr, EnumIter, IntoStaticStr)]
-#[reflect_value(Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Reflect, Clone, Copy, FromStr, EnumIter, IntoStaticStr, FromReflect)]
+#[reflect(Deserialize, Serialize)]
 enum Stage {
     Egg,
     Larvae,
@@ -152,6 +152,9 @@ pub mod yew {
                 <p>{"hi i am "}{&self.name}</p>
             }
         }
+        fn view_no_context(&self) -> Html {
+            todo!()
+        }
     }
 
     impl Item for Test {
@@ -187,6 +190,9 @@ pub mod yew {
                 }
             }
         }
+        fn view_no_context(&self) -> Html {
+            todo!()
+        }
     }
 
     #[derive(Reflect)]
@@ -214,6 +220,9 @@ pub mod yew {
                 }
                 </>
             }
+        }
+        fn view_no_context(&self) -> Html {
+            todo!()
         }
     }
 
@@ -265,6 +274,9 @@ pub mod yew {
                 </div>
             })
         }
+        fn view_no_context(&self) -> Html {
+            todo!()
+        }
     }
 
     impl YewObj for super::Brood {
@@ -289,6 +301,9 @@ pub mod yew {
                 }
                 </div>
             }
+        }
+        fn view_no_context(&self) -> Html {
+            todo!()
         }
     }
 }

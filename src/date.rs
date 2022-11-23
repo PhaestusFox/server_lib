@@ -1,7 +1,7 @@
 use serde::{Serialize, Deserialize};
 use bevy_reflect::prelude::*;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Reflect)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Reflect, FromReflect)]
 #[reflect_value(Serialize)]
 pub struct Date(pub(crate) u32);
 impl std::str::FromStr for Date {

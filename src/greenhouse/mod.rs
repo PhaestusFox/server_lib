@@ -7,6 +7,8 @@ use enum_utils::FromStr;
 use strum::{EnumIter, IntoStaticStr};
 use bevy_reflect::Reflect;
 
+mod gh_crate;
+
 pub(crate) fn register_types(type_reg: &mut bevy_reflect::TypeRegistry) {
     type_reg.register::<Crop>();
     type_reg.register::<Crate>();
@@ -15,11 +17,15 @@ pub(crate) fn register_types(type_reg: &mut bevy_reflect::TypeRegistry) {
 }
 
 
-#[derive(Debug, Deserialize, Serialize, Reflect, Clone, Copy, FromStr, EnumIter, IntoStaticStr)]
+#[derive(Debug, Deserialize, Serialize, Reflect, Clone, Copy, FromStr, EnumIter, IntoStaticStr, Default, PartialEq, Eq, Hash)]
 #[reflect_value(Deserialize, Serialize)]
 pub enum Crop {
+    #[default]
     None,
-    Tomato,
+    CherryTomato,
+    TrussTomato,
+    ParsleyCurly,
+    ParsleyFlat,
 }
 
 impl Display for Crop {
@@ -34,24 +40,14 @@ impl Display for CrateSize {
     }
 }
 
-impl Default for Crop {
-    fn default() -> Self {
-        Crop::None
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize, Reflect, Clone, Copy, FromStr, EnumIter, IntoStaticStr)]
+#[derive(Debug, Deserialize, Serialize, Reflect, Clone, Copy, FromStr, EnumIter, IntoStaticStr, Default, PartialEq, Eq, Hash)]
 #[reflect_value(Deserialize, Serialize)]
 pub enum CrateSize {
+    #[default]
+    None,
     Small,
     Normal,
     Large,
-}
-
-impl Default for CrateSize {
-    fn default() -> Self {
-        CrateSize::Normal
-    }
 }
 
 impl Display for Grade {
@@ -60,21 +56,17 @@ impl Display for Grade {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Reflect, Clone, Copy, FromStr, EnumIter, IntoStaticStr)]
+#[derive(Debug, Deserialize, Serialize, Reflect, Clone, Copy, FromStr, EnumIter, IntoStaticStr, Default, PartialEq, Eq, Hash)]
 #[reflect_value(Deserialize, Serialize)]
 pub enum Grade {
+    #[default]
+    None,
     First,
     Second,
     Third,
 }
 
-impl Default for Grade {
-    fn default() -> Self {
-        Grade::First
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize, Reflect, Default, Clone)]
+#[derive(Debug, Deserialize, Serialize, Reflect, Default, Clone, Copy, Hash, PartialEq, Eq)]
 #[reflect(Deserialize, Serialize, Default, ToItem)]
 pub struct Crate {
     #[serde(skip)]
@@ -82,6 +74,21 @@ pub struct Crate {
     crop: Crop,
     size: CrateSize,
     grade: Grade,
+}
+
+impl Crate {
+    fn match_crate(&self, patern: &Crate) -> bool {
+        if patern.crop != self.crop && patern.crop != Crop::None {
+            return false;
+        }
+        if patern.size != self.size && patern.size != CrateSize::None {
+            return false;
+        }
+        if patern.grade != self.grade && patern.grade != Grade::None {
+            return false;
+        }
+        true
+    }
 }
 
 impl Item for Crate {
@@ -132,4 +139,19 @@ mod yew;
 pub fn date_to_id(date: Date) -> ItemId {
     let bytes = date.0.to_be_bytes();
     ItemId(Uuid::new_v3(CONFIG.greenhouse_namespace, &bytes))
+}
+
+pub enum GreenHouseMsg {
+    Get(ItemId),
+    LoadList(Vec<ItemId>),
+    LoadItem(Box<dyn Item>),
+    SetDate(Date),
+    ServerEvent(ServerSideEvent),
+    NewCrate,
+    EditCrate(ItemId),
+    SaveCrate,
+    DeleteCrate,
+    AddToSum(Crate),
+    RemoveFromSum(Crate),
+    SetPlot(String),
 }
